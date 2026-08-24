@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import math
 import os
@@ -21,6 +22,13 @@ _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 _APPROVED_FACE_THRESHOLD = 0.35
 _APPROVED_PERSON_CLASS = "Person"
 _APPROVED_PPE_ASSOCIATION = "single_person_frame"
+_EXPECTED_MODEL_SHA256 = {
+    "OpenVINO model XML": "925997fab66c3c38e119523beddbfb57ea77baab0a277682435f69deb5f07772",
+    "OpenVINO model BIN": "8e38799672cc650fde3d76678d6c365ba388479c820131de040d67cb8cb946dd",
+    "OpenVINO model metadata": "c5300971f889d5d0741d9bd42d009086e0979c36318290e94c11ca2cf5fb25c6",
+    "YuNet face detector model": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
+    "SFace recognizer model": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+}
 
 
 @dataclass(slots=True)
@@ -181,6 +189,9 @@ def _check_model_paths(report: PreflightReport, config: LauncherConfig) -> None:
                 f"OpenVINO model directory must contain exactly one .xml and one .bin file: "
                 f"{model_path}"
             )
+        else:
+            _check_model_checksum(report, "OpenVINO model XML", xml_files[0])
+            _check_model_checksum(report, "OpenVINO model BIN", bin_files[0])
         _check_model_metadata(report, model_path)
 
     face_paths = (
@@ -203,6 +214,8 @@ def _check_model_paths(report: PreflightReport, config: LauncherConfig) -> None:
         path = config.resolve_runtime_path(value)
         if not path.is_file():
             report.error(f"{label} does not exist: {path}")
+        else:
+            _check_model_checksum(report, label, path)
 
 
 def _check_model_metadata(report: PreflightReport, model_path: Path) -> None:
@@ -210,6 +223,7 @@ def _check_model_metadata(report: PreflightReport, model_path: Path) -> None:
     if not metadata_path.is_file():
         report.error(f"OpenVINO model metadata does not exist: {metadata_path}")
         return
+    _check_model_checksum(report, "OpenVINO model metadata", metadata_path)
     try:
         import yaml
     except ModuleNotFoundError:
@@ -222,6 +236,20 @@ def _check_model_metadata(report: PreflightReport, model_path: Path) -> None:
         validate_model_class_names(names)
     except (KeyError, TypeError, ValueError, OSError, UnicodeError, yaml.YAMLError) as exc:
         report.error(f"OpenVINO model metadata class policy is invalid: {exc}")
+
+
+def _check_model_checksum(report: PreflightReport, label: str, path: Path) -> None:
+    expected = _EXPECTED_MODEL_SHA256[label]
+    try:
+        with path.open("rb") as stream:
+            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+    except OSError as exc:
+        report.error(f"{label} could not be read for checksum validation: {path} ({exc})")
+        return
+    if actual != expected:
+        report.error(
+            f"{label} checksum mismatch: {path} (expected {expected}, got {actual})"
+        )
 
 
 def _check_worksites(report: PreflightReport, config: LauncherConfig) -> None:

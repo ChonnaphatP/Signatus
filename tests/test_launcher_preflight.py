@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -10,8 +11,28 @@ from signatus_ai.tracker import APPROVED_MODEL_CLASS_NAMES
 from signatus_launcher.config import LauncherConfig
 from signatus_launcher.preflight import run_preflight
 
+_TEST_METADATA = "names:\n" + "".join(
+    f"  {index}: {name}\n" for index, name in APPROVED_MODEL_CLASS_NAMES.items()
+)
+_TEST_MODEL_SHA256 = {
+    "OpenVINO model XML": hashlib.sha256(b"xml").hexdigest(),
+    "OpenVINO model BIN": hashlib.sha256(b"bin").hexdigest(),
+    "OpenVINO model metadata": hashlib.sha256(_TEST_METADATA.encode()).hexdigest(),
+    "YuNet face detector model": hashlib.sha256(b"model").hexdigest(),
+    "SFace recognizer model": hashlib.sha256(b"model").hexdigest(),
+}
+
 
 class LauncherPreflightTests(unittest.TestCase):
+    def setUp(self) -> None:
+        checksum_patch = patch.dict(
+            "signatus_launcher.preflight._EXPECTED_MODEL_SHA256",
+            _TEST_MODEL_SHA256,
+            clear=True,
+        )
+        checksum_patch.start()
+        self.addCleanup(checksum_patch.stop)
+
     def test_accepts_complete_approved_static_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = _make_config(Path(directory))
@@ -124,6 +145,18 @@ class LauncherPreflightTests(unittest.TestCase):
         self.assertIn("class policy is invalid", combined)
         self.assertIn("valid POSIX shared-memory name", combined)
 
+    def test_rejects_model_checksum_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = _make_config(root)
+            (root / "models" / "sface.onnx").write_bytes(b"wrong model")
+            with patch("signatus_launcher.preflight._port_available", return_value=True):
+                report = run_preflight(config, include_gui=True)
+
+        self.assertTrue(
+            any("SFace recognizer model checksum mismatch" in item for item in report.errors)
+        )
+
     def test_reports_occupied_ports_without_starting_or_reusing_services(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = _make_config(Path(directory))
@@ -146,11 +179,7 @@ def _make_config(
     model_dir.mkdir(parents=True)
     (model_dir / "detector.xml").write_text("xml", encoding="utf-8")
     (model_dir / "detector.bin").write_bytes(b"bin")
-    (model_dir / "metadata.yaml").write_text(
-        "names:\n"
-        + "".join(f"  {index}: {name}\n" for index, name in APPROVED_MODEL_CLASS_NAMES.items()),
-        encoding="utf-8",
-    )
+    (model_dir / "metadata.yaml").write_text(_TEST_METADATA, encoding="utf-8")
     (root / "models" / "yunet.onnx").write_bytes(b"model")
     (root / "models" / "sface.onnx").write_bytes(b"model")
 

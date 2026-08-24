@@ -10,15 +10,20 @@ From the repository root:
 
 ```bash
 cd /home/signatus/Signatus
-python3.11 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[ai,gui,dev]'
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
 Do not overwrite an existing `.env`. Before enabling tracking, confirm that its
 model paths, camera source, person class, and PPE association match the approved
 deployment configuration.
+
+The model binaries and biometric deployment data are not stored in Git. Complete
+the artifact transfer and checksum steps in `docs/DEPLOYMENT.md` before running
+operational preflight on a fresh clone.
 
 The expected camera settings for the first Linux video device are:
 

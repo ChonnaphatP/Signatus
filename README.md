@@ -4,28 +4,6 @@ Signatus v1 is an edge AI entrance-screening system. It identifies a worker,
 checks required PPE for the selected worksite, and sends one of four outcomes to
 a display-only PySide6 GUI.
 
-This repository implements the approved v1 architecture:
-
-```text
-PySide6 GUI <-> Python Core <-> Python AI Service <-> USB camera
-      ^                              |
-      +----- shared-memory frames ---+
-```
-
-- AI Service publishes tracking events over WebSocket.
-- Core sends embedding and PPE commands to the AI Service over REST.
-- Core publishes outcome signals to the GUI over WebSocket.
-- Track handling state stays in RAM and resets when Core stops.
-- PPE commands read the latest cached YOLO detection result.
-- AI Service owns camera capture and publishes presentation-only BGR frames and
-  same-frame YOLO overlay metadata to the local GUI through a versioned,
-  double-buffered shared-memory segment.
-- AI Service uses OpenCV YuNet face detection and SFace FP32 ONNX descriptors;
-  Core performs cosine-similarity identity matching.
-- Camera lifecycle commands travel GUI → Core → AI Service. The AI Service
-  starts healthy with the camera stopped and keeps all models resident across
-  camera stop/start cycles.
-
 ## Current build status
 
 Implemented:
@@ -62,11 +40,16 @@ Still required before a production-stable release:
 ## Linux setup
 
 ```bash
-python3.11 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[ai,gui,dev]'
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 cp .env.example .env
 ```
+
+This supports CPython 3.11 through 3.14 on x86-64 Linux. A fresh clone does not contain model
+binaries or biometric deployment data. Follow `docs/DEPLOYMENT.md` to transfer the exact approved
+artifacts, configure the target host, and complete the preflight and physical acceptance gates.
 
 Start the AI Service:
 
@@ -86,7 +69,7 @@ Start the full-screen GUI on the machine connected to the HDMI display:
 signatus-gui
 ```
 
-For normal operation, use the CLI supervisor instead of starting three
+For normal operation, you can use the CLI supervisor instead of starting three
 terminals manually:
 
 ```bash
@@ -94,7 +77,7 @@ signatus-launch --check-only
 signatus-launch
 ```
 
-It performs fail-closed deployment checks, starts AI then Core then GUI, waits
+It first performs fail-closed deployment checks, starts AI Service then Core then GUI, waits
 for operational readiness, monitors the services, writes rotating logs, and
 stops the processes in reverse order. The normal initial state is AI `READY`,
 Core `READY`, GUI running, and Camera `STOPPED`; camera frames are not a service
@@ -112,7 +95,7 @@ Preview availability never changes a screening decision. The GUI still receives
 all identity, PPE, and authorization outcomes only from Core.
 
 After selecting an available Wo.No., use the GUI's **Start Camera** and **Stop
-Camera** controls. Stop releases the physical device and invalidates cached
+Camera** controls. ***Stop Camera*** releases the physical device and invalidates cached
 detections/preview data without stopping Core, GUI, AI, or reloading models.
 
 Tracking is disabled in `.env.example`. Set `SIGNATUS_AI_TRACKING_ENABLED=true`
@@ -120,28 +103,16 @@ only after confirming the model directory and camera source. The default preview
 slot capacity is 6,220,800 bytes, enough for raw 1920x1080 BGR; increase
 `SIGNATUS_PREVIEW_MAX_FRAME_BYTES` before startup for larger frames.
 
-## Tests
-
-The domain tests use Python's standard library and do not load the model:
-
 ```bash
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-## Windows copy target
-
-After extracting this repository, copy or clone it to:
-
-```text
-E:\Workspace\โครงงานปี 3\Signatus Software Repo
-```
-
-The Linux deployment must use Linux paths in `.env`; the Windows paths are
-development source locations only.
+The Linux deployment must use Linux paths in `.env`.
 
 ## Documents
 
 - `docs/ARCHITECTURE.md` records the implemented process and transport boundaries.
+- `docs/DEPLOYMENT.md` defines the reproducible fresh-machine installation and acceptance gate.
 - `docs/DEVELOPER_REPORT.md` lists parked decisions and the data still needed.
 - `docs/LAUNCHER.md` describes one-command preflight, startup, supervision, and
   shutdown.

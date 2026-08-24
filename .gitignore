@@ -23,6 +23,7 @@ config/worksites/*.json
 *.zip
 models/*
 !models/.gitkeep
+!models/README.md
 
 # Editor, OS, and downloaded-file metadata.
 .DS_Store
