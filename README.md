@@ -95,7 +95,7 @@ Preview availability never changes a screening decision. The GUI still receives
 all identity, PPE, and authorization outcomes only from Core.
 
 After selecting an available Wo.No., use the GUI's **Start Camera** and **Stop
-Camera** controls. ***Stop Camera*** releases the physical device and invalidates cached
+Camera** controls. **Stop Camera** releases the physical device and invalidates cached
 detections/preview data without stopping Core, GUI, AI, or reloading models.
 
 Tracking is disabled in `.env.example`. Set `SIGNATUS_AI_TRACKING_ENABLED=true`
