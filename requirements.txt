@@ -1,0 +1,2 @@
+# Install Signatus with its AI, GUI, and development dependencies.
+-e .[ai,gui,dev]

@@ -29,3 +29,6 @@ models/*
 .idea/
 .vscode/
 *Zone.Identifier
+
+# Local agent instructions.
+AGENTS.md
