@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "signatus"
+version = "0.1.0"
+description = "Signatus v1 edge worksite access-screening system"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
+  "pydantic>=2.10,<3",
+  "python-dotenv>=1,<2",
+  "uvicorn[standard]>=0.34,<1",
+  "websockets>=15,<17",
+]
+
+[project.optional-dependencies]
+gui = [
+  "PySide6>=6.8,<7",
+]
+ai = [
+  "numpy>=2,<3",
+  "opencv-python-headless>=4.10,<5",
+  "openvino>=2025.0,<2027",
+  "PyYAML>=6,<7",
+  "ultralytics>=8.3,<9",
+]
+dev = [
+  "pytest>=8,<10",
+  "pytest-asyncio>=0.25,<2",
+  "ruff>=0.11,<1",
+]
+
+[project.scripts]
+signatus-gui = "signatus_gui.app:main"
+signatus-launch = "signatus_launcher.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

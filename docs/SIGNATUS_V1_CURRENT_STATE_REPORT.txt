@@ -1,0 +1,1449 @@
+SIGNATUS V1 CURRENT-STATE TECHNICAL REPORT
+==========================================
+
+Report date: 2026-08-21 UTC
+Workspace inspected: /home/signatus/Signatus
+
+
+1. OVERALL ASSESSMENT
+=====================
+
+Signatus v1 is a substantial functional prototype with a complete three-process
+code path:
+
+    PySide6 GUI
+        <-> Core REST/WebSocket
+    Python Core
+        <-> AI REST/WebSocket
+    Python AI Service
+        <-> OpenCV VideoCapture
+    USB camera
+
+    AI Service -- local shared memory --> GUI preview and YOLO overlays
+
+The safety-critical Core rules are implemented and unit-tested. The AI adapters,
+shared-memory transport, face embedding backend, and redesigned GUI are also
+implemented.
+
+It is not currently production-ready or fully runnable end-to-end on this
+machine:
+
+- No /dev/video0 or other /dev/video* device exists.
+- The current .env enables AI tracking and selects /dev/video0, but tracking
+  cannot operate until that camera device is available.
+- The only worksite file contains placeholder 3-dimensional face embeddings;
+  the included SFace model produces 128-dimensional descriptors. Consequently,
+  no real worker can currently receive AUTHORIZED or PPE_VIOLATION.
+- The 0.35 face-match threshold has not been experimentally validated.
+- Camera, ByteTrack, real-person face recognition, PPE inference,
+  shared-memory preview, and HDMI rendering have not been exercised together
+  on the deployment hardware.
+- The workspace is not a functional Git checkout. .git/ exists but is empty,
+  and git status fails.
+- The active virtual environment is Python 3.14.4 rather than the documented
+  Python 3.11 environment and contains conflicting OpenCV installations.
+
+Current automated result:
+
+- unittest: 60 tests passed.
+- pytest: 60 tests and 11 subtests passed.
+- Ruff: passed.
+- Local OpenVINO inference on a blank image: passed.
+- YuNet/SFace model initialization and blank-image inference: passed with
+  NO_FACE.
+- Real-camera end-to-end test: not possible because no camera device exists.
+
+
+2. PROJECT STRUCTURE
+====================
+
+2.1 Inventory scope
+-------------------
+
+The filesystem includes a generated .venv with 34,461 files and 3,384
+directories. This inventory lists every Signatus project file individually,
+every project/generated directory, generated caches by category, and the
+virtual environment by structure and installed distributions. Because .git/
+is invalid, this is a filesystem inventory, not a source-controlled-file
+inventory.
+
+2.2 Root
+--------
+
+AGENTS.md
+    Developer constraints, approved v1 architecture, fail-closed rules, and
+    verification commands.
+
+README.md
+    Project overview, implemented features, setup instructions, runtime
+    commands, and known deployment work.
+
+pyproject.toml
+    Package metadata, dependency ranges, signatus-gui entry point, pytest
+    configuration, and Ruff configuration.
+
+.env.example
+    Example Core, AI, camera, model, face, shared-memory, and GUI environment
+    settings. No actual .env exists.
+
+.gitignore
+    Excludes virtual environments, caches, .env, build output, and all models
+    except .gitkeep.
+
+signatus-current-20260819.zip
+    44,323,367-byte, 75-entry project snapshot predating the latest
+    GUI/shared-memory changes; not used at runtime.
+
+.agents/
+    Empty environment-owned directory.
+
+.codex/
+    Empty environment-owned directory.
+
+.git/
+    Empty directory; not valid Git metadata.
+
+.pytest_cache/
+    Generated pytest cache.
+
+.ruff_cache/
+    Generated Ruff cache.
+
+.venv/
+    Installed Python 3.14.4 virtual environment.
+
+config/
+    Runtime configuration data.
+
+docs/
+    Architecture, developer, startup, and current-state documentation.
+
+models/
+    YOLO OpenVINO, YuNet, and SFace model assets.
+
+src/
+    Python packages and generated editable-install metadata.
+
+tests/
+    Unit and component-level test suite.
+
+2.3 Configuration
+-----------------
+
+config/worksites/
+    Worksite/Wo.No. JSON repository read by WorksiteRepository.
+
+config/worksites/WO-014.example.json
+    Only current worksite: WO-014, "Cold steel work," requiring goggles,
+    gloves, and boots. Contains two placeholder 3-value embeddings. Despite
+    .example in the name, it matches *.json and is loaded as live data.
+
+2.4 Documentation
+-----------------
+
+docs/ARCHITECTURE.md
+    Implemented process boundaries, event/command schemas, track lifecycle,
+    shared-memory v2 layout, face backend, and PPE rules.
+
+docs/DEVELOPER_REPORT.md
+    Approved decisions and remaining deployment work. Partially stale
+    regarding preview metadata.
+
+docs/STARTUP_PROCEDURE.md
+    Linux/WSL camera attachment and three-terminal startup procedure. Uses an
+    obsolete path and assumes .env exists.
+
+docs/SIGNATUS_V1_CURRENT_STATE_REPORT.txt
+    This report.
+
+2.5 Model assets
+----------------
+
+models/.gitkeep
+    Keeps the otherwise ignored model directory in a clean checkout.
+
+models/face_detection_yunet_2023mar.onnx
+    232,589-byte OpenCV YuNet face detector.
+
+models/face_recognition_sface_2021dec.onnx
+    38,696,353-byte OpenCV SFace FP32 descriptor model. Produces 128-value
+    descriptors.
+
+models/yolo26s100e18b_int8_openvino_model/
+    Ultralytics OpenVINO PPE detector export.
+
+models/yolo26s100e18b_int8_openvino_model/metadata.yaml
+    Model metadata, 640x640 input, INT8, detection task, 11 class names,
+    Ultralytics 8.4.40 export. Metadata declares AGPL-3.0.
+
+models/yolo26s100e18b_int8_openvino_model/yolo26s100e18b.xml
+    780,003-byte OpenVINO graph.
+
+models/yolo26s100e18b_int8_openvino_model/yolo26s100e18b.bin
+    9,691,928-byte OpenVINO weights.
+
+models/yolo26s100e18b_int8_openvino_model/metadata.yaml:Zone.Identifier
+models/yolo26s100e18b_int8_openvino_model/yolo26s100e18b.xml:Zone.Identifier
+models/yolo26s100e18b_int8_openvino_model/yolo26s100e18b.bin:Zone.Identifier
+    Windows download metadata sidecars; not used by Signatus.
+
+Exact model classes:
+
+    0  helmet
+    1  gloves
+    2  vest
+    3  boots
+    4  goggles
+    5  none
+    6  Person
+    7  no_helmet
+    8  no_goggle
+    9  no_gloves
+    10 no_boots
+
+2.6 Shared contracts package
+----------------------------
+
+src/signatus_contracts/__init__.py
+    Re-exports public event, result, and frame-buffer contract symbols.
+
+src/signatus_contracts/models.py
+    Pydantic schemas and enums for AI events, embedding results, PPE results,
+    GUI outcomes, and states.
+
+src/signatus_contracts/frame_buffer.py
+    Shared-memory v2 header, validation, slot offsets, detection serialization,
+    and fail-closed decoding.
+
+src/signatus_contracts/__pycache__/
+    Three generated Python 3.14 bytecode files.
+
+2.7 AI Service package
+----------------------
+
+src/signatus_ai/__init__.py
+    Package marker.
+
+src/signatus_ai/app.py
+    FastAPI application, service lifecycle, health endpoint, embedding/PPE
+    commands, and event WebSocket.
+
+src/signatus_ai/settings.py
+    AISettings environment parser and defaults.
+
+src/signatus_ai/tracker.py
+    UltralyticsOpenVINOTracker: camera ownership, YOLO/ByteTrack inference,
+    cache updates, preview publication, and tracking events.
+
+src/signatus_ai/cache.py
+    BoundingBox, Detection, TrackedPerson, FrameSnapshot, and the locked
+    latest-snapshot DetectionCache.
+
+src/signatus_ai/association.py
+    Approved SinglePersonFrameAssociation and fail-closed
+    UnconfiguredAssociation.
+
+src/signatus_ai/embedding.py
+    OpenCV YuNet detection, tracked-person crop, SFace alignment, and
+    descriptor extraction.
+
+src/signatus_ai/events.py
+    In-process EventHub with bounded subscriber queues.
+
+src/signatus_ai/frame_publisher.py
+    AI-owned, double-buffered shared-memory frame and detection writer.
+
+src/signatus_ai/__pycache__/
+    Nine generated Python 3.14 bytecode files.
+
+2.8 Core package
+----------------
+
+src/signatus_core/__init__.py
+    Package marker.
+
+src/signatus_core/app.py
+    Core FastAPI application, AI listener lifecycle, GUI signal hub, worksite
+    REST endpoints, state endpoint, and GUI WebSocket.
+
+src/signatus_core/settings.py
+    CoreSettings environment parser.
+
+src/signatus_core/domain.py
+    Internal dataclass duplicates of transport types plus worksite, worker,
+    PPE rule, and evaluation types.
+
+src/signatus_core/controller.py
+    CoreController state machine, identity matching flow, PPE evaluation,
+    retry handling, and outcome generation.
+
+src/signatus_core/ai_client.py
+    Async HTTP AI command client and reconnecting AI event WebSocket client.
+
+src/signatus_core/face_match.py
+    Cosine similarity and best-worker selection.
+
+src/signatus_core/ppe.py
+    Exact semantic-to-model PPE mapping and fail-closed evaluation.
+
+src/signatus_core/track_guard.py
+    Process-memory track state, cooldown, handled flag, retry count, and track
+    removal.
+
+src/signatus_core/worksites.py
+    JSON worksite enumeration and deserialization.
+
+src/signatus_core/__pycache__/
+    Ten generated Python 3.14 bytecode files.
+
+2.9 GUI package
+---------------
+
+src/signatus_gui/__init__.py
+    Package version 0.1.0.
+
+src/signatus_gui/__main__.py
+    Enables python -m signatus_gui.
+
+src/signatus_gui/app.py
+    CLI argument parsing, Qt object construction, signal connections, client
+    startup, preview startup, and fullscreen/windowed launch.
+
+src/signatus_gui/client.py
+    Qt-native asynchronous REST, outcome WebSocket, reconnect timer, and
+    500 ms Core-state polling.
+
+src/signatus_gui/contracts.py
+    GUI-local Worksite/Outcome dataclasses and defensive JSON parsers.
+
+src/signatus_gui/frame_reader.py
+    Non-owning shared-memory reader, stable-copy logic, stale detection,
+    reconnect behavior, and detached QImage conversion.
+
+src/signatus_gui/views.py
+    Work-order selection UI, workstation monitoring layout, CameraView
+    QPainter overlays, PPE/status panel, and main window.
+
+src/signatus_gui/static/
+    Empty leftover directory; no browser/static GUI is used.
+
+src/signatus_gui/__pycache__/
+    Seven generated Python 3.14 bytecode files.
+
+2.10 Editable-install metadata
+------------------------------
+
+src/signatus.egg-info/PKG-INFO
+    Package name, version, Python constraint, and dependencies.
+
+src/signatus.egg-info/SOURCES.txt
+    Source/package manifest; excludes models, config, and most documentation.
+
+src/signatus.egg-info/dependency_links.txt
+    Empty generated dependency-links metadata.
+
+src/signatus.egg-info/entry_points.txt
+    Defines signatus-gui = signatus_gui.app:main.
+
+src/signatus.egg-info/requires.txt
+    Base dependencies and ai, gui, and dev extras.
+
+src/signatus.egg-info/top_level.txt
+    Lists the four Python packages.
+
+2.11 Tests
+----------
+
+tests/test_ai_settings.py
+    Person class, association defaults, and preview configuration.
+
+tests/test_association.py
+    Exact single-person association and all unresolved cases.
+
+tests/test_controller.py
+    Authorized, unauthorized, PPE violation, none, association failure,
+    retries, and handled-track behavior with fakes.
+
+tests/test_embedding.py
+    Crop, face-count statuses, descriptor validation, and missing-data behavior
+    using fake detector/recognizer objects.
+
+tests/test_face_match.py
+    Cosine similarity, dimension mismatch, zero vectors, threshold acceptance,
+    and rejection.
+
+tests/test_frame_buffer.py
+    Binary v2 headers, offsets, overlay encoding, corrupt metadata, sequence
+    validation, and fail-closed behavior.
+
+tests/test_frame_publisher.py
+    Real shared-memory creation, alternating slots, overlay publication,
+    invalid frames, capacity failures, and ownership.
+
+tests/test_gui_contracts.py
+    Worksite/outcome parsing and invalid payload rejection.
+
+tests/test_gui_frame_reader.py
+    Stable copies, in-progress rejection, missing segments, repeat reads, and
+    detached image ownership.
+
+tests/test_gui_views.py
+    Offscreen Qt tests for warning persistence, camera availability, letterbox
+    mapping, explicit selection, and PPE neutral/pass/fail states.
+
+tests/test_ppe.py
+    Positive/negative policy, missing observations, vest behavior, goggles
+    naming, and none.
+
+tests/test_track_guard.py
+    One-second cooldown, three-attempt limit, handled state, and TRACK_LOST
+    cleanup.
+
+tests/test_tracker_preview.py
+    Preview publication and nonfatal publisher exceptions using fake
+    camera/model objects.
+
+tests/test_worksites.py
+    JSON loading of worker identity and embeddings.
+
+tests/__pycache__/
+    28 generated bytecode files: unittest and pytest variants for the 14 test
+    modules.
+
+2.12 Generated caches and environment
+-------------------------------------
+
+.pytest_cache contains .gitignore, CACHEDIR.TAG, README.md, and
+v/cache/nodeids.
+
+.ruff_cache contains .gitignore, CACHEDIR.TAG, and five hash-named cache blobs
+under 0.16.3/.
+
+.venv details:
+
+- Python 3.14.4 linked to /usr/bin/python3.14.
+- bin/, include/, lib/python3.14/site-packages/, share/man/man1/.
+- lib64 -> lib.
+- Python links include python, python3, python3.14, and an unusual
+  pi-symbol-named link pointing to python3.
+- Contains Signatus, PySide6, FastAPI, OpenVINO, Ultralytics, Torch, CUDA
+  packages, test tools, and dependencies.
+- Both opencv-python==5.0.0.93 and
+  opencv-python-headless==4.14.0.94 are installed. import cv2 resolves to
+  version 5.0.0.
+
+
+3. AI SERVICE IMPLEMENTATION STATUS
+===================================
+
+3.1 Implemented and working at code/component-test level
+--------------------------------------------------------
+
+FastAPI service
+~~~~~~~~~~~~~~~
+
+src/signatus_ai/app.py defines:
+
+- GET /health
+- POST /commands/tracks/{track_id}/embedding
+- POST /commands/tracks/{track_id}/ppe
+- WS /ws/events
+
+The lifespan starts UltralyticsOpenVINOTracker.run() only when
+SIGNATUS_AI_TRACKING_ENABLED is true.
+
+Camera and YOLO tracking
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+UltralyticsOpenVINOTracker:
+
+- Opens cv2.VideoCapture(camera_source).
+- Loads YOLO(model_path).
+- Calls model.track(source=frame, persist=True, tracker="bytetrack.yaml",
+  verbose=False).
+- Converts YOLO boxes into Detection and TrackedPerson.
+- Requires a non-null ByteTrack ID before treating a Person detection as a
+  tracked person.
+- Stores the latest frame, boxes, and people in DetectionCache.
+- Emits PERSON_SEEN for each currently tracked person.
+- Emits TRACK_LOST after the configured 1.5-second absence.
+- Runs _read_snapshot() in asyncio.to_thread(), keeping capture and YOLO
+  inference off the AI event loop.
+
+The OpenVINO model successfully performed a blank 640x640 inference in the
+current environment.
+
+Face backend
+~~~~~~~~~~~~
+
+OpenCVYuNetSFaceEmbedder:
+
+- Crops the requested tracked-person rectangle.
+- Uses cv2.FaceDetectorYN with configurable score, NMS, and top-k.
+- Requires exactly one detected face.
+- Uses cv2.FaceRecognizerSF.alignCrop() and .feature().
+- Returns distinct NO_FACE, MULTIPLE_FACES, LOW_QUALITY, and ERROR statuses.
+- Rejects empty, zero-norm, and non-finite descriptors.
+
+The included models initialize successfully. A blank-frame check returned
+NO_FACE, as expected.
+
+PPE cache behavior
+~~~~~~~~~~~~~~~~~~
+
+get_cached_ppe():
+
+- Returns NO_CACHED_FRAME when empty.
+- Returns TRACK_NOT_FOUND when the requested track is absent.
+- Uses SinglePersonFrameAssociation.
+- Returns ASSOCIATION_UNRESOLVED for zero, multiple, or mismatched people.
+- Returns all non-Person class names for the sole requested person.
+
+Shared-memory preview
+~~~~~~~~~~~~~~~~~~~~~
+
+SharedMemoryFramePublisher:
+
+- Is the sole creator/owner.
+- Uses two frame slots and two detection-metadata slots.
+- Uses an odd/even seqlock.
+- Publishes raw BGR pixels and same-inference class/confidence/box metadata.
+- Treats preview failures as nonfatal to tracking.
+- Unlinks only a segment it created.
+
+Event fan-out
+~~~~~~~~~~~~~
+
+EventHub supports multiple WebSocket subscribers through bounded size-64
+queues and drops the oldest queued event when a subscriber falls behind.
+
+3.2 Stubbed or placeholder behavior
+-----------------------------------
+
+- UnconfiguredAssociation is a deliberate fail-closed placeholder for every
+  association setting except exact single_person_frame.
+- OpenCVYuNetSFaceEmbedder.close() is a no-op lifecycle hook.
+- Camera source 0 is an unvalidated placeholder.
+- Face detector settings are defaults from OpenCV examples, not
+  site-calibrated values.
+- No explicit YOLO confidence/IoU threshold is configured; Ultralytics
+  defaults are assumed.
+- bytetrack.yaml is the Ultralytics-installed default, not a project-owned or
+  calibrated tracker configuration.
+
+3.3 Not yet started or not implemented
+--------------------------------------
+
+- Real camera integration on the deployment workstation.
+- Camera resolution, FPS, pixel format, backend, exposure, focus, or reconnect
+  policy.
+- Automatic recovery after camera read failure or model inference exception.
+- A production face-enrollment workflow.
+- Representative face-threshold calibration.
+- IoU or multi-person person-to-PPE association; intentionally parked.
+- Service health based on tracker-task liveness.
+- Authentication, TLS, authorization, or network hardening.
+- Service supervision/systemd/container deployment.
+- Real image/video regression datasets.
+- Actual YOLO/ByteTrack integration tests with the model and camera stream.
+- End-to-end AI-to-Core event/command tests.
+
+3.4 Important AI limitations and risks
+--------------------------------------
+
+1. Tracking is disabled by default. With current defaults the AI service
+   starts, but creates no shared-memory segment, reads no camera, caches no
+   detections, and emits no events.
+
+2. No camera exists on this host. Enabling tracking currently fails at
+   VideoCapture(0).
+
+3. Tracker task failure is not surfaced reliably. If _open(), camera reading,
+   or inference raises, the tracking task terminates. /health still reports
+   status ok and the configured tracking_enabled value; it does not report
+   task failure.
+
+4. No camera retry loop exists. A transient disconnection ends tracking rather
+   than reopening the device.
+
+5. Face inference is synchronous on the AI event loop. generate() is async,
+   but executes _generate_sync() directly. This can block other AI HTTP or
+   WebSocket work during SFace processing.
+
+6. Exceptions occurring after the shared-memory writer marks the buffer odd
+   can leave the current mapping unreadable until a later successful
+   publication or service restart.
+
+7. Preview timestamp_ns is captured before YOLO inference; FrameSnapshot
+   captured_at is assigned after inference. They describe the same frame but
+   are not the same clock sample.
+
+8. A slow Core subscriber can silently lose AI events once its 64-entry queue
+   fills.
+
+
+4. CORE IMPLEMENTATION STATUS
+=============================
+
+4.1 Implemented and working at code/unit-test level
+---------------------------------------------------
+
+State machine
+~~~~~~~~~~~~~
+
+CoreController owns:
+
+- CoreState.STANDBY
+- CoreState.AUTHORIZATION
+- Selected worksite.
+- Identity matching.
+- PPE policy application.
+- Final GUI outcomes.
+
+A PERSON_SEEN event starts authorization only when a worksite is selected,
+Core is STANDBY, the track is not handled, and its retry cooldown has elapsed.
+Core returns to STANDBY in a finally block.
+
+Track lifecycle
+~~~~~~~~~~~~~~~
+
+InMemoryTrackGuard:
+
+- Stores TrackRecord objects in a Python dictionary.
+- Tracks last_seen_at, handled, face_failures, and retry_not_before.
+- Uses a one-second retry cooldown.
+- Marks the track handled after three face failures.
+- Marks completed decisions handled.
+- Deletes all state for a track on TRACK_LOST.
+- Loses all track state on process restart, intentionally.
+
+Identity matching
+~~~~~~~~~~~~~~~~~
+
+find_best_match():
+
+- Computes cosine similarity.
+- Rejects empty, zero, or dimension-mismatched vectors.
+- Selects the highest-scoring worker.
+- Applies the configured 0.35 minimum similarity.
+
+PPE policy
+~~~~~~~~~~
+
+    Semantic PPE  Positive  Negative
+    helmet        helmet    no_helmet
+    gloves        gloves    no_gloves
+    vest          vest      none
+    boots         boots     no_boots
+    goggles       goggles   no_goggle
+
+Behavior:
+
+- Negative wins over positive.
+- Missing positive is noncompliant.
+- none marks every required PPE item missing.
+- Any non-OK AI PPE response becomes an empty detection set and fails closed.
+
+Four distinct outcomes
+~~~~~~~~~~~~~~~~~~~~~~
+
+- AUTHORIZED
+- PPE_VIOLATION
+- UNAUTHORIZED
+- FACE_CAPTURE_FAILED
+
+FACE_CAPTURE_FAILED remains distinct and includes retry information.
+
+Core API
+~~~~~~~~
+
+- GET /api/health
+- GET /api/worksites
+- POST /api/worksites/{worksite_id}/select
+- GET /api/state
+- WS /ws/gui
+
+AI client
+~~~~~~~~~
+
+AIServiceClient:
+
+- Uses httpx.AsyncClient with a five-second timeout for commands.
+- Uses a reconnecting WebSocket loop for events.
+- Converts command transport failures into ERROR.
+- Retries AI event connection every second.
+
+4.2 Stubbed or placeholder behavior
+-----------------------------------
+
+- The worksite repository contains only example data.
+- Both configured worker embeddings are placeholders.
+- No worker display name exists; only worker_id.
+- GUISignalHub is a simple in-memory broadcast set with one global latest
+  signal.
+- Core health is a minimal process/state check, not dependency health.
+- Worksite JSON handling is direct dictionary access rather than a validated
+  configuration schema.
+
+4.3 Not yet started or not implemented
+--------------------------------------
+
+- Real enrolled-worker data.
+- Face-threshold experiment.
+- Worksite JSON schema validation and migration/versioning.
+- Duplicate worksite/worker detection.
+- Validation that all embeddings use the expected SFace dimension/backend.
+- Worksite-change lifecycle policy for already-present tracks.
+- Database or persistent state; intentionally excluded from v1.
+- Dependency-aware health/readiness.
+- Authentication/TLS.
+- Audit logging or outcome history.
+- Integration tests for real HTTP/WebSocket paths.
+- Process supervision and production observability.
+
+4.4 Important Core limitations and risks
+----------------------------------------
+
+1. Current authorization cannot succeed. SFace produces 128 values; both
+   enrolled examples have three. Dimension mismatch makes every valid face
+   unauthorized.
+
+2. Worksite selection is not synchronized with authorization.
+   select_worksite() does not acquire the controller lock. A worksite can
+   change while _authorize() is awaiting AI calls, potentially allowing the
+   in-flight decision to use the new worksite.
+
+3. Changing worksite does not clear track state. A person already marked
+   handled remains handled after a new worksite is selected.
+
+4. GUISignalHub.latest is not cleared on worksite selection. A reconnecting
+   GUI can receive the last result from a previous worksite.
+
+5. listen_forever() awaits handler(event) before reading the next WebSocket
+   message. TRACK_LOST can be delayed while embedding/PPE calls run.
+
+6. An unexpected controller exception can terminate the AI listener task
+   without changing /api/health.
+
+7. Core manually parses AI JSON instead of using shared Pydantic models.
+   Returned track_id values are ignored, embedding elements and class lists
+   are weakly validated, and negative event track IDs can be accepted.
+
+8. Embedding and PPE commands separately request the latest cache and may
+   operate on different frames.
+
+9. Missing fields, malformed JSON, unknown PPE names, or invalid embedding
+   contents in a worksite file can cause runtime exceptions.
+
+10. Core reports status ok whether or not the AI Service is connected.
+
+
+5. GUI IMPLEMENTATION STATUS
+============================
+
+5.1 Implemented and working at component-test level
+---------------------------------------------------
+
+Initialization screen
+~~~~~~~~~~~~~~~~~~~~~
+
+WorksiteSelection provides:
+
+- Displayed package version.
+- Signatus application name.
+- Native QListWidget.
+- Numbered Wo.No. rows.
+- Normal scrollbar behavior.
+- Selected Wo.No. and description.
+- Explicit Select button.
+- Double-click selection.
+- Error label and temporary disabling during selection.
+
+Monitoring screen
+~~~~~~~~~~~~~~~~~
+
+DetectionScreen provides:
+
+- Horizontal QSplitter.
+- Expanding camera region.
+- 280-340 px information panel.
+- Active Wo.No. and name.
+- Worker display.
+- Required PPE rows.
+- Neutral -, check-mark Pass, and X Fail.
+- Operational status text.
+- Separately polled Core state.
+- Persistent ONE PERSON AT A TIME.
+- Distinct rendering of all four outcomes.
+
+Camera and overlays
+~~~~~~~~~~~~~~~~~~~
+
+CameraView:
+
+- Stores one QImage and one detection tuple.
+- Draws the image and all boxes in one paintEvent().
+- Uses no child widgets per detection.
+- Adds compact class/confidence labels.
+- Calculates one aspect-ratio-preserving target rectangle.
+- Applies the same scale and letterbox offsets to boxes.
+- Clamps source coordinates to frame dimensions.
+
+Letterbox mapping is covered by an offscreen Qt test.
+
+Async GUI integration
+~~~~~~~~~~~~~~~~~~~~~
+
+CoreClient uses QNetworkAccessManager for REST, QWebSocket for outcomes, a
+one-second reconnect timer, and a 500 ms /api/state polling timer after
+worksite selection.
+
+SharedMemoryPreview uses a 33 ms Qt timer and stale/reconnect logic.
+
+No inference or blocking HTTP call is performed on the GUI thread.
+
+5.2 Stubbed or placeholder behavior
+-----------------------------------
+
+- When a worksite does not provide required_ppe, the GUI displays helmet,
+  vest, gloves, and boots as neutral fallback rows.
+- Worker display uses worker_id because no worker name exists.
+- src/signatus_gui/static/ is an unused empty remnant.
+- The visual version falls back to 0.1.0 if package metadata is unavailable.
+
+5.3 Not yet started or not implemented
+--------------------------------------
+
+- Change-worksite or back navigation after entering monitoring.
+- Worker names or photos.
+- GUI display of track exit/reset.
+- Localization beyond the one Thai work-order caption.
+- Accessibility review.
+- Deployment-display/font validation.
+- Network integration tests for CoreClient.
+- Screenshot/golden visual regression tests.
+- Performance profiling with actual 1080p frames and continuous inference.
+- Native Windows executable packaging; current runtime target is Linux/WSL.
+
+5.4 Important GUI limitations and risks
+---------------------------------------
+
+1. Final outcome status persists after Core returns to standby. Core emits no
+   track-exit or clear-result GUI signal. SYSTEM can remain AUTHORIZED or
+   DENIED while the separate Core state reads STANDBY.
+
+2. AUTHORIZATION may last less than the 500 ms state-poll interval and can be
+   missed.
+
+3. State-poll failures are silent, so the last Core state can become stale.
+
+4. Fresh frames are copied from shared memory into Python bytes and again into
+   a detached QImage on the Qt thread. This has not been performance-tested on
+   the i3-8100 target.
+
+5. Protocol/request errors after entering monitoring are sent to the now-hidden
+   selection-page error label.
+
+6. Camera unavailability is shown, but there is no explicit AI-service or
+   tracker-health status.
+
+7. Segoe UI and Thai rendering depend on deployment fonts.
+
+
+6. DATA CONTRACTS
+=================
+
+6.1 AI Service -> Core events
+-----------------------------
+
+Transport:
+
+    ws://127.0.0.1:8001/ws/events
+
+Schema:
+
+    {
+      "type": "PERSON_SEEN | TRACK_LOST",
+      "track_id": 3,
+      "captured_at": 1786980000.125
+    }
+
+Shared Pydantic model:
+
+    class AIEvent(BaseModel):
+        type: AIEventType
+        track_id: int = Field(ge=0)
+        captured_at: float
+
+Behavior and flags:
+
+- PERSON_SEEN is emitted repeatedly while a track remains visible.
+- TRACK_LOST is emitted after the configured absence timeout.
+- Events are not persisted or replayed.
+- Subscriber queue size is 64.
+- The schema matches the documented v1 schema.
+- Core manually coerces fields rather than using the shared Pydantic model.
+- No event sequence, frame ID, confidence, or box is sent to Core.
+- captured_at is a Unix-seconds float assigned after inference.
+
+6.2 Core -> AI commands and responses
+-------------------------------------
+
+Embedding command:
+
+    POST /commands/tracks/{track_id}/embedding
+
+No request body.
+
+Response:
+
+    {
+      "track_id": 3,
+      "status": "OK | NO_FACE | MULTIPLE_FACES | LOW_QUALITY | ERROR",
+      "embedding": [0.1, 0.2, 0.3]
+    }
+
+embedding is null on failures.
+
+PPE command:
+
+    POST /commands/tracks/{track_id}/ppe
+
+No request body.
+
+Response:
+
+    {
+      "track_id": 3,
+      "status": "OK | NO_CACHED_FRAME | TRACK_NOT_FOUND |
+                 ASSOCIATION_UNRESOLVED | ERROR",
+      "detected_classes": ["helmet", "no_gloves", "boots"],
+      "captured_at": 1786980000.125
+    }
+
+Pydantic normally includes empty/default fields on failures:
+
+    {
+      "track_id": 3,
+      "status": "NO_CACHED_FRAME",
+      "detected_classes": [],
+      "captured_at": null
+    }
+
+Flags:
+
+- Schemas match the documented command design.
+- Core ignores the response's returned track_id.
+- No cache sequence ID links embedding and PPE responses.
+- No freshness threshold is enforced.
+
+6.3 Core -> GUI
+---------------
+
+Worksite list:
+
+    GET /api/worksites
+
+    [
+      {
+        "worksite_id": "WO-014",
+        "name": "Cold steel work",
+        "required_ppe": ["goggles", "gloves", "boots"]
+      }
+    ]
+
+required_ppe is a GUI-related extension beyond the earlier ID/name-only
+response.
+
+Worksite selection:
+
+    POST /api/worksites/{worksite_id}/select
+
+    {
+      "worksite_id": "WO-014",
+      "name": "Cold steel work",
+      "required_ppe": ["goggles", "gloves", "boots"],
+      "state": "STANDBY"
+    }
+
+State polling:
+
+    GET /api/state
+
+    {
+      "state": "STANDBY | AUTHORIZATION",
+      "selected_worksite": {
+        "worksite_id": "WO-014",
+        "name": "Cold steel work"
+      },
+      "latest_signal": null
+    }
+
+Outcome WebSocket:
+
+    ws://127.0.0.1:8000/ws/gui
+
+Authorized:
+
+    {"status":"AUTHORIZED","worker_id":"EMP0017"}
+
+PPE violation:
+
+    {
+      "status":"PPE_VIOLATION",
+      "worker_id":"EMP0017",
+      "missing_ppe":["gloves"]
+    }
+
+Unauthorized:
+
+    {"status":"UNAUTHORIZED"}
+
+Face capture failure:
+
+    {
+      "status":"FACE_CAPTURE_FAILED",
+      "face_failure_reason":"NO_FACE",
+      "attempt":2,
+      "retry_allowed":true
+    }
+
+Flags:
+
+- Four outcomes match the approved v1 requirement.
+- required_ppe was added for GUI row construction.
+- Current Core state is not pushed over the WebSocket; GUI polls /api/state.
+- SYSTEM: AUTHORIZED and SYSTEM: DENIED are GUI labels, not Core enums.
+- The shared GUIStatusSignal Pydantic class is not used by Core; Core uses a
+  duplicate dataclass and manual to_dict().
+- GUI parsing does not enforce status-specific field combinations or attempt
+  ranges.
+
+6.4 Camera -> AI Service
+------------------------
+
+There is no JSON or network schema.
+
+Actual interface:
+
+    capture = cv2.VideoCapture(camera_source)
+    ok, frame = capture.read()
+
+Assumptions:
+
+- ok is true.
+- Frame is convertible to a NumPy array.
+- Shape is height x width x 3.
+- Type is uint8.
+- Channel order is BGR.
+- Ultralytics boxes refer to original capture coordinates.
+- AI Service exclusively owns the camera.
+
+Code default when SIGNATUS_CAMERA_SOURCE is unset:
+
+    SIGNATUS_CAMERA_SOURCE=0
+
+The current .env explicitly selects /dev/video0.
+
+No camera negotiation, resolution, FPS, exposure, or backend selection is
+implemented.
+
+6.5 AI Service -> GUI preview contract
+--------------------------------------
+
+This bypasses Core and is presentation-only.
+
+Shared memory default:
+
+    signatus_camera_v1
+
+Actual binary protocol version:
+
+    FRAME_BUFFER_VERSION = 2
+
+Header:
+
+    <8s9IQQ4x
+
+Fields:
+
+    magic
+    version
+    header_size
+    slot_capacity
+    width
+    height
+    stride
+    channels
+    active_slot
+    overlay_size
+    sequence
+    timestamp_ns
+    padding
+
+Constants:
+
+- Header: 64 bytes.
+- Two frame slots.
+- Default frame-slot capacity: 6,220,800 bytes.
+- Two overlay slots.
+- Overlay-slot capacity: 65,536 bytes.
+- Maximum detections: 1,024.
+- Default total segment size: 12,572,736 bytes.
+
+Detection payload:
+
+    uint32 detection_count
+    repeat:
+        float32 x1
+        float32 y1
+        float32 x2
+        float32 y2
+        float32 confidence
+        uint16 class_name_byte_length
+        UTF-8 class_name bytes
+
+Flags:
+
+- This deviates from the original raw-BGR-only preview contract.
+- The transport version is 2, but the segment name still contains _v1.
+- Old v1 and current v2 processes are incompatible.
+- Metadata carries no track ID and no policy/outcome data.
+- AI and GUI must be upgraded/restarted together.
+
+
+7. TRANSPORT MECHANISMS ACTUALLY IN USE
+======================================
+
+Camera -> AI
+    Direct OpenCV device access through cv2.VideoCapture.
+
+AI capture/inference -> AI async loop
+    Worker thread through asyncio.to_thread().
+
+AI tracker -> AI cache
+    Direct calls protected by asyncio.Lock.
+
+AI tracker -> AI event clients
+    In-process asyncio.Queue objects through EventHub.
+
+AI -> Core events
+    WebSocket JSON at /ws/events.
+
+Core -> AI embedding/PPE
+    HTTP POST with JSON responses through httpx.AsyncClient.
+
+Core controller -> GUI signal hub
+    Direct async function call.
+
+Core -> GUI outcomes
+    WebSocket JSON at /ws/gui.
+
+GUI -> Core worksite/state
+    Qt QNetworkAccessManager HTTP GET/POST; state every 500 ms.
+
+AI -> GUI preview
+    POSIX shared memory through multiprocessing.shared_memory.
+
+GUI shared memory -> widgets
+    33 ms QTimer, detached QImage, Qt signal, and QPainter.
+
+There are no direct Python calls between processes, no database, no message
+broker, no MJPEG/WebRTC, and no Core video proxy.
+
+
+8. DEVIATIONS FROM THE ORIGINAL/APPROVED SPECIFICATION
+======================================================
+
+8.1 Shared-memory preview v2
+----------------------------
+
+The original preview was raw BGR only. The current implementation adds
+presentation-only YOLO class, confidence, and boxes to the same segment so the
+GUI can draw accurate overlays without duplicate inference.
+
+This is a process-boundary contract change and should be explicitly ratified.
+docs/DEVELOPER_REPORT.md is stale because it still describes a BGR-only
+preview.
+
+8.2 Worksite REST extension
+---------------------------
+
+required_ppe was added to worksite list and selection responses so the GUI can
+construct PPE rows. Core still owns evaluation and class policy.
+
+8.3 Core-state polling
+----------------------
+
+The GUI polls /api/state every 500 ms rather than extending /ws/gui with state
+transitions. Short authorization states can be missed and stale state failures
+are silent.
+
+8.4 Worker ID shown as worker name
+----------------------------------
+
+The Worker field shows worker_id because no human-name field exists.
+
+8.5 Preview after inference
+---------------------------
+
+Frames are published after YOLO inference to atomically pair pixels and boxes.
+Preview latency therefore includes inference time, and failed inference means
+no publication for that frame.
+
+8.6 Synchronous face processing
+-------------------------------
+
+SFace runs synchronously on the AI event loop because the code documents prior
+executor hangs. This can temporarily block other AI service work.
+
+8.7 Environment deviation
+-------------------------
+
+The canonical setup uses Python 3.11. The active environment uses Python
+3.14.4. pyproject.toml technically permits it through >=3.11, but it is not the
+documented deployment version.
+
+
+9. ASSUMPTIONS EMBODIED IN THE IMPLEMENTATION
+=============================================
+
+1. AI and Core run on loopback ports 8001 and 8000.
+2. GUI and AI run on the same Linux host.
+3. The OS provides POSIX-style Python shared memory.
+4. Camera source 0 is correct.
+5. Camera frames are uint8, three-channel BGR.
+6. Default OpenCV camera backend selection is acceptable.
+7. Camera resolution fits within 6,220,800 bytes.
+8. Frame stride is at least width x 3.
+9. AI Service is the sole camera owner.
+10. Ultralytics boxes use original-frame coordinates.
+11. Ultralytics default detection thresholds are acceptable.
+12. The installed bytetrack.yaml is suitable without calibration.
+13. Person is the exact class, with case-insensitive comparison in code.
+14. A physical checkpoint enforces one person at a time.
+15. Every non-person detection in a valid single-person frame belongs to that
+    person.
+16. A latest cached frame is sufficiently fresh for embedding and PPE.
+17. Embedding and PPE may use different latest frames.
+18. 1.5 seconds is an appropriate track-loss timeout.
+19. One second is an appropriate face-retry cooldown.
+20. Three face failures are sufficient before requiring exit.
+21. A global single authorization at a time is acceptable.
+22. A 64-event queue is sufficient and dropping older events is acceptable.
+23. Five-second HTTP command timeouts are acceptable.
+24. One-second WebSocket reconnect intervals are acceptable.
+25. Local transports are trusted and require no authentication or TLS.
+26. Unix wall-clock timestamps are sufficient for capture records.
+27. Monotonic time is sufficient for cooldowns and track loss.
+28. Worksite JSON files are trusted and valid.
+29. Every required PPE name exists in PPE_CLASS_MAP.
+30. none overrides coexisting positive observations.
+31. Negative PPE observations win over positive observations.
+32. Missing PPE observations are failures.
+33. Vest requires an observed positive because it has no negative class.
+34. no_goggle is the correct singular model class.
+35. All enrolled descriptors use the same SFace model and dimension.
+36. 0.35 is usable for functional integration before production validation.
+37. worker_id is sufficient operator-facing identification.
+38. Exposing required_ppe does not move policy ownership to the GUI.
+39. Preview failure must never change screening outcomes.
+40. Presentation metadata may bypass Core through shared memory.
+41. A 65,536-byte overlay slot and 1,024 detections are sufficient.
+42. Class names fit within 255 UTF-8 bytes.
+43. Float32 coordinates are sufficiently precise.
+44. AI and GUI deploy with the same shared-memory contract version.
+45. Keeping signatus_camera_v1 for binary version 2 is acceptable.
+46. Copying full frames on the Qt event thread is fast enough.
+47. A 33 ms preview poll approximates the desired rate.
+48. Three seconds without a frame means the preview is stale.
+49. A 500 ms Core-state poll is sufficient.
+50. Persisting the last final GUI outcome is acceptable.
+51. Segoe UI or a suitable fallback exists.
+52. Extra JSON fields may be ignored.
+53. No persistent track records are required.
+54. Restarting Core may clear all track state.
+55. The example JSON should be loaded because it matches *.json.
+
+
+10. OPEN QUESTIONS AND BLOCKERS
+===============================
+
+10.1 Unresolved blockers
+------------------------
+
+Deployment and hardware:
+
+- What exact USB camera is approved?
+- What is its stable Linux device path?
+- What resolution, frame rate, and pixel format should be used?
+- Can the target sustain YOLO, SFace, shared-memory copies, and GUI painting?
+- Are display scaling, Thai rendering, and fonts correct on target?
+
+Identity:
+
+- Where will real descriptors come from?
+- Who owns enrollment and descriptor replacement?
+- Are all descriptors generated with the included SFace model?
+- What data validates false-accept/false-reject behavior and the threshold?
+- Should worker names be added to schemas?
+
+PPE and association:
+
+- Is single_person_frame formally accepted for production?
+- How will physical one-person enforcement be audited?
+- Is IoU/multi-person association expected later?
+- Are confidence thresholds and ByteTrack settings approved?
+
+Contracts and lifecycle:
+
+- Is shared-memory v2 formally approved?
+- Should the segment be renamed signatus_camera_v2?
+- Should GUI outcomes clear on TRACK_LOST?
+- Should Core push state over WebSocket instead of polling?
+- What happens to tracks when the worksite changes?
+- Should selection be blocked during authorization?
+- Should GUISignalHub.latest clear on worksite selection?
+
+Operations and security:
+
+- What process supervisor starts and monitors the services?
+- Should health report dependency and tracker-task status?
+- Are unauthenticated local endpoints acceptable?
+- What logging, audit retention, and alarms are required?
+- Does the YOLO metadata's AGPL-3.0 declaration meet licensing requirements?
+
+10.2 Decisions resolved locally
+-------------------------------
+
+- Added overlays to shared memory rather than routing them through Core.
+- Bumped binary frame protocol from version 1 to 2.
+- Retained the old signatus_camera_v1 name.
+- Fixed each overlay slot at 65,536 bytes.
+- Used float32 detection coordinates.
+- Added required_ppe to Core worksite responses.
+- Used /api/state polling for Core state.
+- Mapped AUTHORIZATION to AUTHORIZING in the GUI.
+- Used worker ID in place of worker name.
+- Added four fallback PPE rows.
+- Kept final outcomes persistent on screen.
+- Kept face inference synchronous in the AI HTTP handler.
+- Made preview errors nonfatal to screening.
+
+These decisions deserve explicit architect review.
+
+
+11. WHAT CAN CURRENTLY BE RUN
+=============================
+
+11.1 Exact documented startup commands
+---------------------------------------
+
+The documented uvicorn commands use the existing .env file. The startup
+document now references the actual workspace, /home/signatus/Signatus.
+
+11.2 Running with the current .env
+----------------------------------
+
+AI Service:
+
+The current configuration enables tracking, selects /dev/video0, uses the
+single_person_frame association, enables preview, and uses shared-memory name
+signatus_camera_v1. The configured OpenVINO, YuNet, and SFace model assets are
+present. Because /dev/video0 is absent, camera capture and tracking cannot run,
+no usable preview is published, and no PERSON_SEEN events are emitted.
+
+Core:
+
+Core can start, reports status ok and STANDBY, lists WO-014, reconnects to AI
+events, and accepts worksite selection. It produces no decisions unless AI
+events arrive.
+
+GUI:
+
+The GUI can start, load WO-014, allow selection, show the monitoring screen,
+show Camera unavailable, and show Core connection/state. No outcomes occur
+because the configured camera is unavailable.
+
+11.3 Enabling tracking on this host
+-----------------------------------
+
+SIGNATUS_AI_TRACKING_ENABLED=true is already set, but /dev/video0 is absent.
+OpenCV cannot open the configured device, the tracker task terminates, and no
+events or frames are produced. Core and GUI remain available but cannot screen.
+
+11.4 Running with a camera but current worksite data
+----------------------------------------------------
+
+If a camera were attached and face detection succeeded:
+
+- SFace produces a 128-dimensional descriptor.
+- Both configured examples have three dimensions.
+- cosine_similarity returns no match for mismatched dimensions.
+- Every usable face becomes UNAUTHORIZED.
+
+Possible current real outcomes:
+
+- FACE_CAPTURE_FAILED when face capture fails.
+- UNAUTHORIZED when face capture succeeds.
+
+Currently unreachable with repository data:
+
+- AUTHORIZED
+- PPE_VIOLATION
+
+Those are covered only with test fakes.
+
+11.5 Verified versus unverified
+--------------------------------
+
+Verified:
+
+- Core decision logic: unit-tested.
+- Track retry/cleanup: unit-tested.
+- PPE policy: unit-tested.
+- Shared-memory contract: unit-tested.
+- Publisher/reader: tested with local temporary shared memory.
+- GUI layout and coordinate mapping: offscreen component-tested.
+- OpenVINO model: blank-image inference passed.
+- YuNet/SFace initialization: blank-image test passed with NO_FACE.
+
+Unverified:
+
+- Real camera capture.
+- Real person tracking.
+- ByteTrack continuity and loss.
+- Real face recognition.
+- Real PPE decision.
+- AI/Core network integration under live tracking.
+- Core/GUI network integration under live outcomes.
+- Full shared-memory live preview.
+- Full three-process end-to-end flow.
+- Deployment hardware performance.
+
+
+12. DOCUMENTATION AND ENVIRONMENT INCONSISTENCIES
+=================================================
+
+1. .git/ is invalid; there is no usable history or clean/dirty status.
+2. Shared-memory protocol is v2 but its name remains signatus_camera_v1.
+3. The environment uses Python 3.14.4, not canonical Python 3.11.
+4. OpenCV 5 GUI and OpenCV 4 headless distributions are both installed; cv2
+   resolves to 5.0.0 outside the declared <5 dependency.
+5. OpenVINO logs telemetry-directory permission warnings.
+6. Models are Git-ignored and this workspace has no valid Git repository, so
+   their provenance/integrity is not version-controlled here.
+7. YOLO metadata declares AGPL-3.0, but no project license review or license
+    file is present.
+8. FastAPI endpoint annotations claim dict[str, str] for responses that also
+    contain required_ppe lists.
+
+
+FINAL ARCHITECTURAL DISPOSITION
+===============================
+
+The codebase is best characterized as a well-tested functional v1 prototype
+with the intended safety ownership boundaries intact, but with incomplete
+production data, no working deployment camera, no true end-to-end validation,
+and several lifecycle/contract decisions that should be ratified before calling
+the architecture approved for deployment.

@@ -1,0 +1,19 @@
+{
+  "worksite_id": "WO-014",
+  "name": "Cold steel work",
+  "authorized_workers": [
+    {
+      "worker_id": "EMP0017",
+      "embedding": [1.0, 0.0, 0.0]
+    },
+    {
+      "worker_id": "EMP0032",
+      "embedding": [0.0, 1.0, 0.0]
+    }
+  ],
+  "required_ppe": [
+    "goggles",
+    "gloves",
+    "boots"
+  ]
+}

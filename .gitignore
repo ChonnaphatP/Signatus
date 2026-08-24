@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+.env
+.env.*
+!.env.example
+dist/
+build/
+
+# Local runtime state, logs, and enrolled biometric profiles.
+.signatus/
+config/worker_profiles/*.json
+config/worksites/*.json
+
+# Large local artifacts and downloaded model files.
+*.zip
+models/*
+!models/.gitkeep
+
+# Editor, OS, and downloaded-file metadata.
+.DS_Store
+.idea/
+.vscode/
+*Zone.Identifier
